@@ -25,6 +25,9 @@ classifiers = [
 ]
 
 dynamic = [ "version" ]
+dependencies = [
+    "cocotb>=2.0.1",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "cocotbext.interface.__version__" }
