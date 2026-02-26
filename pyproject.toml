@@ -1,0 +1,30 @@
+[project]
+name = "cocotbext-interface"
+description = "An interface class for conneting test environment to DUT"
+readme = "README.md"
+license = { file = "LICENSE" }
+maintainers = [
+  { name = "Rasmus Grøndahl Olsen", email = "simplhdl@gmail.com" },
+]
+authors = [
+  { name = "Rasmus Grøndahl Olsen", email = "simplhdl@gmail.com" },
+]
+requires-python = ">=3.8"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+
+dynamic = [ "version" ]
+
+[tool.setuptools.dynamic]
+version = { attr = "cocotbext.interface.__version__" }
