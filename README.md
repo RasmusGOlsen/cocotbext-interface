@@ -1,0 +1,1 @@
+# Interface class for Cocotb
