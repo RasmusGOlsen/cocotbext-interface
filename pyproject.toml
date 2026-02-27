@@ -31,3 +31,8 @@ dependencies = [
 
 [tool.setuptools.dynamic]
 version = { attr = "cocotbext.interface.__version__" }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
