@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any, TypeAlias, Union, cast
 
@@ -30,21 +31,72 @@ from .utils import is_match
 
 
 class ModportView:
-    def __init__(self, interface: 'Interface', name: str, inputs: list[str], outputs: list[str]):
+    def __init__(
+        self,
+        interface: Interface,
+        name: str,
+        inputs: list[str],
+        outputs: list[str],
+        inouts: list[str],
+        callables: list[str]
+    ):
         self._name = name
-        for sig in (inputs + outputs):
+        self._interface = interface
+
+        # 1. Map Signals
+        for sig in (inputs + outputs + inouts):
             setattr(self, sig, getattr(interface, sig, None))
+
+        # 2. Map Callables (Methods from the parent interface)
+        for func_name in callables:
+            if hasattr(interface, func_name):
+                # We fetch the method already bound to the interface instance
+                method = getattr(interface, func_name)
+                setattr(self, func_name, method)
+            else:
+                raise AttributeError(f"Method '{func_name}' listed in modport '{name}' "
+                                   f"was not found in {interface.__class__.__name__}")
 
 
 class ClockingBlock(ModportView):
-    def __init__(self, interface: 'Interface', name: str, clock: str, inputs: list[str], outputs: list[str]):
-        super().__init__(interface, name, inputs, outputs)
+    def __init__(
+        self,
+        interface: Interface,
+        name: str,
+        clock: str,
+        inputs: list[str],
+        outputs: list[str],
+        inouts: list[str]
+    ):
+        super().__init__(interface, name, inputs, outputs, inouts, list())
         self._clock = getattr(interface, clock)
 
+    # async def wait(self, cycles: int = 1):
+    #     """Wait for N rising edges of the clock."""
+    #     for _ in range(cycles):
+    #         await RisingEdge(self._clock_hdl)
 
-def modport(cls):
-    cls._is_modport = True
-    return cls
+
+def modport(count: int | type | None = None):
+    """
+    Decorator to define a modport.
+    Usage: @modport or @modport(8)
+    """
+    def decorator(cls):
+        cls._is_modport = True
+        # If count is a class (used as @modport), default to 1 instance.
+        # If count is an int (used as @modport(8)), use that value.
+        cls._instance_count = count if isinstance(count, int) else 1
+
+        if not hasattr(cls, "inputs"): cls.inputs = []
+        if not hasattr(cls, "outputs"): cls.outputs = []
+        if not hasattr(cls, "callables"): cls.callables = []
+        return cls
+
+    # Handle the @modport (no parens) case
+    if inspect.isclass(count):
+        return decorator(count)
+    return decorator
 
 
 def clocking(cls):
@@ -69,19 +121,54 @@ class Interface:
             component = cast(HierarchyObject, top)
         self._component = component
         self._idx = idx
-        self._discover_and_map_signals(pattern, kwargs)
-        self._create_modports_and_clocking()
+        self._kwargs = kwargs
 
-    def _create_modports_and_clocking(self):
+        self._discover_and_map_signals(pattern, kwargs)
+        self._create_modports()
+        self._create_clocking()
+
+
+    def _create_modports(self):
+        for name in dir(self.__class__):
+                    attr = getattr(self.__class__, name)
+                    if isinstance(attr, type) and getattr(attr, "_is_modport", False):
+                        # Retrieve the value from the decorator metadata
+                        class_default = getattr(attr, "_instance_count", 1)
+                        # Check kwargs for override, using class_default as the fallback
+                        count = self._kwargs.get(f"{name}_count", class_default)
+
+                        # Logic to create either a single view or a list of views
+                        def create_view(instance_idx=None):
+                            # We pass instance_idx to ModportView in case you want
+                            # sub-indexing logic inside the modport signals later
+                            return ModportView(
+                                interface=self,
+                                name=f"{name}_{instance_idx}" if instance_idx is not None else name,
+                                inputs=getattr(attr, "inputs", []),
+                                outputs=getattr(attr, "outputs", []),
+                                inouts=getattr(attr, "inouts", []),
+                                callables=getattr(attr, "callables", [])
+                            )
+
+                        if count > 1:
+                            # Create a list of modports: bus.slave[0], bus.slave[1]...
+                            setattr(self, name, [create_view(i) for i in range(count)])
+                        else:
+                            setattr(self, name, create_view())
+
+    def _create_clocking(self):
         for name in dir(self.__class__):
             attr = getattr(self.__class__, name)
             if isinstance(attr, type):
-                if getattr(attr, "_is_modport", False):
-                    view = ModportView(self, name, getattr(attr, "inputs", []), getattr(attr, "outputs", []))
-                    setattr(self, name, view)
-                elif getattr(attr, "_is_clocking", False):
+                if getattr(attr, "_is_clocking", False):
                     clk_name = getattr(attr, "clock", [None])[0]
-                    view = ClockingBlock(self, name, clk_name, getattr(attr, "inputs", []), getattr(attr, "outputs", []))
+                    view = ClockingBlock(
+                        interface=self,
+                        name=name,
+                        clock=clk_name,
+                        inputs=getattr(attr, "inputs", []),
+                        outputs=getattr(attr, "outputs", []),
+                        inouts=getattr(attr, "inouts", []))
                     setattr(self, name, view)
 
     def _apply_indexing(self, handle: Any) -> Any:
