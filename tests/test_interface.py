@@ -8,6 +8,7 @@ without requiring a simulator.
 from typing import Iterator
 
 import pytest
+import asyncio
 
 from cocotbext.interface import Interface, clocking, modport
 
@@ -26,7 +27,17 @@ class MockHandle:
         self._name = name
         self._is_array = is_array
         self._array_size = array_size
+        # simulate the cocotb .value property used by ClockedSignal
         self._value = 0
+
+    @property
+    def value(self):
+        """Simple property to mimic cocotb handle read/write."""
+        return self._value
+
+    @value.setter
+    def value(self, val):
+        self._value = val
 
     def __getitem__(self, index: int):
         """Support array indexing."""
@@ -108,9 +119,8 @@ class InterfaceWithClocking(Interface):
     """Test interface with clocking block."""
     signals = ["clk", "data", "valid"]
 
-    @clocking
+    @clocking(clock="clk")
     class CK:
-        clock = ["clk"]
         inputs = ["data", "valid"]
         outputs = []
 
@@ -369,7 +379,8 @@ class TestClockingBlocks:
         )
 
         ck = iface.CK
-        assert ck._clock is clk_handle
+        # clock handle stored only in _clk_handle
+        assert ck._clk_handle is clk_handle
 
     def test_clocking_block_contains_signals(self, mock_component):
         """Test that clocking block contains input/output signals."""
@@ -384,8 +395,12 @@ class TestClockingBlocks:
         )
 
         ck = iface.CK
-        assert ck.data is data_handle
-        assert ck.valid is valid_handle
+        # signals should be wrapped in ClockedSignal objects
+        from cocotbext.interface.interface import ClockedSignal
+        assert isinstance(ck.data, ClockedSignal)
+        assert ck.data._handle is data_handle
+        assert isinstance(ck.valid, ClockedSignal)
+        assert ck.valid._handle is valid_handle
 
 
 # ============================================================================
@@ -405,7 +420,7 @@ class TestDecorators:
 
     def test_clocking_decorator_sets_flag(self):
         """Test that @clocking decorator sets _is_clocking flag."""
-        @clocking
+        @clocking(clock="clk")
         class TestClocking:
             pass
 
@@ -459,3 +474,718 @@ class TestEdgeCases:
         assert hasattr(iface, "clk")
         assert hasattr(iface, "rst")
         assert hasattr(iface, "data")
+
+
+# ============================================================================
+# Tests: ClockedSignal (Advanced Clocking)
+# ============================================================================
+
+class TestClockedSignal:
+    """Test ClockedSignal wrapper for synchronized sampling and driving."""
+
+    def test_clocked_signal_value_getter(self, mock_component):
+        """Test that ClockedSignal can read the underlying handle value."""
+        from cocotbext.interface.interface import ClockedSignal
+        from cocotb.triggers import RisingEdge
+
+        handle = MockHandle("test_signal")
+        handle._value = 42
+        clk = MockHandle("clk")
+
+        cs = ClockedSignal(handle, clk, RisingEdge)
+        assert cs.value == 42
+
+    def test_clocked_signal_attribute_forwarding(self, mock_component):
+        """Test that ClockedSignal forwards attributes to underlying handle."""
+        from cocotbext.interface.interface import ClockedSignal
+        from cocotb.triggers import RisingEdge
+
+        handle = MockHandle("test_signal")
+        clk = MockHandle("clk")
+
+        cs = ClockedSignal(handle, clk, RisingEdge)
+        # _name attribute should be forwarded
+        assert cs._name == "test_signal"
+
+    def test_clocked_signal_creation_with_rising_edge(self, mock_component):
+        """Test creation of ClockedSignal with RisingEdge."""
+        from cocotbext.interface.interface import ClockedSignal
+        from cocotb.triggers import RisingEdge
+
+        handle = MockHandle("data")
+        clk = MockHandle("clk")
+
+        cs = ClockedSignal(handle, clk, RisingEdge)
+        assert cs._handle is handle
+        assert cs._clk is clk
+        assert cs._edge_type is RisingEdge
+
+    def test_clocked_signal_creation_with_falling_edge(self, mock_component):
+        """Test creation of ClockedSignal with FallingEdge."""
+        from cocotbext.interface.interface import ClockedSignal
+        from cocotb.triggers import FallingEdge
+
+        handle = MockHandle("data")
+        clk = MockHandle("clk")
+
+        cs = ClockedSignal(handle, clk, FallingEdge)
+        assert cs._edge_type is FallingEdge
+
+    def test_clocked_signal_with_input_skew(self, mock_component):
+        """Test ClockedSignal creation with input skew."""
+        from cocotbext.interface.interface import ClockedSignal
+        from cocotb.triggers import RisingEdge, Timer
+
+        handle = MockHandle("data")
+        clk = MockHandle("clk")
+        input_skew = Timer(1, "ns")
+
+        cs = ClockedSignal(handle, clk, RisingEdge, input_skew=input_skew)
+        assert cs._input_skew is input_skew
+
+    def test_clocked_signal_with_output_skew(self, mock_component):
+        """Test ClockedSignal creation with output skew."""
+        from cocotbext.interface.interface import ClockedSignal
+        from cocotb.triggers import RisingEdge, Timer
+
+        handle = MockHandle("data")
+        clk = MockHandle("clk")
+        output_skew = Timer(2, "ns")
+
+        cs = ClockedSignal(handle, clk, RisingEdge, output_skew=output_skew)
+        assert cs._output_skew is output_skew
+
+    # --------------------------------------------------------------------
+    # New tests for capturing and ReadOnlyManager
+    # --------------------------------------------------------------------
+
+    def test_readonly_manager_single_event_per_timestep(self, monkeypatch):
+        """Ensure ReadOnlyManager only creates one Event per simulation time step."""
+
+        async def inner():
+            from cocotbext.interface.utils import ReadOnlyManager
+
+            # reset state
+            ReadOnlyManager._event = None
+            ReadOnlyManager._last_time = -1
+
+            # patch get_sim_time to fixed value
+            monkeypatch.setattr('cocotbext.interface.utils.get_sim_time', lambda: 123)
+
+            events = []
+            class DummyEvent:
+                def __init__(self):
+                    events.append(self)
+                async def wait(self):
+                    pass
+            monkeypatch.setattr('cocotbext.interface.utils.Event', DummyEvent)
+
+            # patch start_soon to schedule the coroutine so it doesn't produce a warning
+            monkeypatch.setattr('cocotbext.interface.utils.start_soon', lambda coro: asyncio.get_event_loop().create_task(coro))
+
+            # call wait twice; should only create one DummyEvent
+            await ReadOnlyManager.wait()
+            await ReadOnlyManager.wait()
+            assert len(events) == 1
+
+        asyncio.run(inner())
+
+    def test_clockedsignal_capture_multiple_signals(self, mock_component, monkeypatch):
+        """Ensure ClockedSignal.capture can be used sequentially on several signals."""
+
+        async def inner():
+            from cocotbext.interface.interface import ClockedSignal, ReadOnlyManager
+            from cocotb.triggers import RisingEdge
+
+            # create two handles with different values
+            h1 = MockHandle("sig1")
+            h1._value = 11
+            h2 = MockHandle("sig2")
+            h2._value = 22
+            clk = MockHandle("clk")
+
+            cs1 = ClockedSignal(h1, clk, RisingEdge)
+            cs2 = ClockedSignal(h2, clk, RisingEdge)
+
+            # intercept ReadOnlyManager.wait calls
+            calls = []
+            async def dummy_wait():
+                calls.append(True)
+            monkeypatch.setattr('cocotbext.interface.interface.ReadOnlyManager.wait', dummy_wait)
+
+            # capture both values sequentially
+            val1 = await cs1.capture()
+            val2 = await cs2.capture()
+
+            assert val1 == 11
+            assert val2 == 22
+            assert len(calls) == 2  # manager was invoked for each capture
+
+        asyncio.run(inner())
+
+
+# ============================================================================
+# Tests: ClockingBlock Advanced Features
+# ============================================================================
+
+class TestClockingBlockAdvanced:
+    """Test advanced clocking block features."""
+
+    def test_clocking_block_wraps_signals_in_clocked_signal(self, mock_component):
+        """Test that ClockingBlock wraps signals in ClockedSignal."""
+        from cocotbext.interface.interface import ClockedSignal
+
+        iface = InterfaceWithClocking(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data"),
+            valid=MockHandle("valid")
+        )
+
+        ck = iface.CK
+        assert isinstance(ck.data, ClockedSignal)
+        assert isinstance(ck.valid, ClockedSignal)
+
+    def test_clocking_block_with_falling_edge(self, mock_component):
+        """Test ClockingBlock with FallingEdge."""
+        from cocotb.triggers import FallingEdge
+
+        class InterfaceWithFallingEdgeClocking(Interface):
+            signals = ["clk", "data"]
+
+            @clocking(clock="clk", edge=FallingEdge)
+            class CK_FE:
+                inputs = ["data"]
+                outputs = []
+
+        iface = InterfaceWithFallingEdgeClocking(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data")
+        )
+
+        ck = iface.CK_FE
+        assert isinstance(ck, ClockingBlock)
+        assert ck._edge_type is FallingEdge
+
+    def test_clocking_block_with_input_output_skews(self, mock_component):
+        """Test ClockingBlock with input and output skews."""
+        from cocotb.triggers import Timer
+
+        class InterfaceWithSkews(Interface):
+            signals = ["clk", "data", "valid"]
+
+            @clocking(clock="clk", input=Timer(1, "ns"), output=Timer(1, "ns"))
+            class CK:
+                inputs = ["data"]
+                outputs = ["valid"]
+
+        iface = InterfaceWithSkews(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data"),
+            valid=MockHandle("valid")
+        )
+
+        ck = iface.CK
+        assert ck.data._input_skew is not None
+        assert ck.valid._output_skew is not None
+
+    def test_clocking_block_has_name(self, mock_component):
+        """Test that ClockingBlock has a name."""
+        iface = InterfaceWithClocking(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data"),
+            valid=MockHandle("valid")
+        )
+
+        ck = iface.CK
+        assert ck._name == "CK"
+
+    def test_clocking_block_interface_reference(self, mock_component):
+        """Test that ClockingBlock maintains reference to parent interface."""
+        iface = InterfaceWithClocking(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data"),
+            valid=MockHandle("valid")
+        )
+
+        ck = iface.CK
+        assert ck._interface is iface
+
+    def test_clocking_block_with_inout_signals(self, mock_component):
+        """Test ClockingBlock with inout signals."""
+        class InterfaceWithInout(Interface):
+            signals = ["clk", "tri_signal"]
+
+            @clocking(clock="clk")
+            class CK:
+                inputs = []
+                outputs = []
+                inouts = ["tri_signal"]
+
+        iface = InterfaceWithInout(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            tri_signal=MockHandle("tri_signal")
+        )
+
+        ck = iface.CK
+        from cocotbext.interface.interface import ClockedSignal
+        assert isinstance(ck.tri_signal, ClockedSignal)
+
+
+# ============================================================================
+# Tests: Modport Advanced Features
+# ============================================================================
+
+class TestModportAdvanced:
+    """Test advanced modport features."""
+
+    def test_modport_with_inout_signals(self, mock_component):
+        """Test modport with inout signals."""
+        class InterfaceWithInoutModport(Interface):
+            signals = ["clk", "tri_signal"]
+
+            @modport
+            class slave:
+                inputs = ["clk"]
+                outputs = []
+                inouts = ["tri_signal"]
+
+        iface = InterfaceWithInoutModport(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            tri_signal=MockHandle("tri_signal")
+        )
+
+        slave = iface.slave
+        assert slave.clk is not None
+        assert slave.tri_signal is not None
+
+    def test_modport_with_multiple_instances(self, mock_component):
+        """Test modport with multiple instances."""
+        class InterfaceWithMultiModport(Interface):
+            signals = ["clk", "data"]
+
+            @modport(count=3)
+            class port:
+                inputs = ["data"]
+                outputs = ["clk"]
+
+        iface = InterfaceWithMultiModport(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data")
+        )
+
+        ports = iface.port
+        assert isinstance(ports, list)
+        assert len(ports) == 3
+        assert all(isinstance(p, ModportView) for p in ports)
+
+    def test_modport_multiple_instance_names(self, mock_component):
+        """Test that multiple modport instances are named correctly."""
+        class InterfaceWithMultiModport(Interface):
+            signals = ["clk", "data"]
+
+            @modport(count=2)
+            class port:
+                inputs = ["data"]
+                outputs = ["clk"]
+
+        iface = InterfaceWithMultiModport(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data")
+        )
+
+        ports = iface.port
+        assert ports[0]._name == "port_0"
+        assert ports[1]._name == "port_1"
+
+    def test_modport_with_callables(self, mock_component):
+        """Test modport that exposes callable methods."""
+        class InterfaceWithCallables(Interface):
+            signals = ["clk", "data"]
+
+            def reset(self):
+                """Reset method."""
+                return "reset_called"
+
+            def enable(self):
+                """Enable method."""
+                return "enable_called"
+
+            @modport
+            class controller:
+                inputs = []
+                outputs = ["clk"]
+                callables = ["reset", "enable"]
+
+        iface = InterfaceWithCallables(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data")
+        )
+
+        controller = iface.controller
+        assert controller.reset() == "reset_called"
+        assert controller.enable() == "enable_called"
+
+    def test_modport_missing_callable_raises_error(self, mock_component):
+        """Test that modport with missing callable raises AttributeError."""
+        class InterfaceWithMissingCallable(Interface):
+            signals = ["clk", "data"]
+
+            @modport
+            class controller:
+                inputs = []
+                outputs = ["clk"]
+                callables = ["nonexistent_method"]
+
+        with pytest.raises(AttributeError, match="Method 'nonexistent_method' listed in modport"):
+            InterfaceWithMissingCallable(
+                component=mock_component,
+                clk=MockHandle("clk"),
+                data=MockHandle("data")
+            )
+
+    def test_modport_linked_to_clocking_block(self, mock_component):
+        """Test modport that links to a clocking block."""
+        class InterfaceWithClockingAndModport(Interface):
+            signals = ["clk", "data", "valid"]
+
+            @clocking(clock="clk")
+            class CK:
+                inputs = ["data"]
+                outputs = ["valid"]
+
+            @modport(clocking="CK")
+            class dut:
+                inputs = ["data"]
+                outputs = ["valid"]
+                callables = []
+
+        iface = InterfaceWithClockingAndModport(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data"),
+            valid=MockHandle("valid")
+        )
+
+        dut = iface.dut
+        assert hasattr(dut, "cb")
+        assert dut.cb is iface.CK
+
+    def test_modport_count_via_kwargs(self, mock_component):
+        """Test modport instance count override via kwargs."""
+        class InterfaceWithModportCount(Interface):
+            signals = ["clk", "data"]
+
+            @modport(count=2)
+            class port:
+                inputs = ["data"]
+                outputs = ["clk"]
+
+        iface = InterfaceWithModportCount(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data"),
+            port_count=4  # Override the count
+        )
+
+        ports = iface.port
+        assert isinstance(ports, list)
+        assert len(ports) == 4
+
+    def test_modport_single_instance_not_list(self, mock_component):
+        """Test that single modport instance is not a list."""
+        class InterfaceWithSingleModport(Interface):
+            signals = ["clk", "data"]
+
+            @modport(count=1)
+            class port:
+                inputs = ["data"]
+                outputs = ["clk"]
+
+        iface = InterfaceWithSingleModport(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data")
+        )
+
+        port = iface.port
+        # Single instance should not be wrapped in list
+        assert isinstance(port, ModportView)
+        assert not isinstance(port, list)
+
+    def test_modport_decorator_with_count_parameter(self):
+        """Test @modport decorator with count parameter."""
+        @modport(count=5)
+        class TestModport:
+            pass
+
+        assert getattr(TestModport, "_instance_count", 1) == 5
+
+    def test_modport_decorator_with_clocking_parameter(self):
+        """Test @modport decorator with clocking parameter."""
+        @modport(clocking="CB")
+        class TestModport:
+            pass
+
+        assert getattr(TestModport, "_clocking_name", None) == "CB"
+
+    def test_modport_all_signals_accessible(self, mock_component):
+        """Test that all signal types are accessible in modport."""
+        class InterfaceWithAllSignalTypes(Interface):
+            signals = ["clk", "data_in", "data_out", "tri_signal"]
+
+            @modport
+            class port:
+                inputs = ["data_in"]
+                outputs = ["data_out"]
+                inouts = ["tri_signal"]
+
+        data_in_handle = MockHandle("data_in")
+        data_out_handle = MockHandle("data_out")
+        tri_handle = MockHandle("tri_signal")
+
+        iface = InterfaceWithAllSignalTypes(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data_in=data_in_handle,
+            data_out=data_out_handle,
+            tri_signal=tri_handle
+        )
+
+        port = iface.port
+        assert port.data_in is data_in_handle
+        assert port.data_out is data_out_handle
+        assert port.tri_signal is tri_handle
+
+
+# ============================================================================
+# Tests: Clocking Decorator
+# ============================================================================
+
+class TestClockingDecorator:
+    """Test @clocking decorator parameters."""
+
+    def test_clocking_decorator_stores_clock_name(self):
+        """Test that @clocking decorator stores clock name."""
+        @clocking(clock="my_clk")
+        class TestClocking:
+            pass
+
+        assert getattr(TestClocking, "_clock_name", None) == "my_clk"
+
+    def test_clocking_decorator_stores_edge_type(self):
+        """Test that @clocking decorator stores edge type."""
+        from cocotb.triggers import FallingEdge
+
+        @clocking(clock="clk", edge=FallingEdge)
+        class TestClocking:
+            pass
+
+        assert getattr(TestClocking, "_edge_type", None) is FallingEdge
+
+    def test_clocking_decorator_stores_input_skew(self):
+        """Test that @clocking decorator stores input skew."""
+        from cocotb.triggers import Timer
+
+        skew = Timer(1, "ns")
+
+        @clocking(clock="clk", input=skew)
+        class TestClocking:
+            pass
+
+        assert getattr(TestClocking, "_input_skew", None) is skew
+
+    def test_clocking_decorator_stores_output_skew(self):
+        """Test that @clocking decorator stores output skew."""
+        from cocotb.triggers import Timer
+
+        skew = Timer(1, "ns")
+
+        @clocking(clock="clk", output=skew)
+        class TestClocking:
+            pass
+
+        assert getattr(TestClocking, "_output_skew", None) is skew
+
+    def test_clocking_decorator_initializes_signal_lists(self):
+        """Test that @clocking decorator initializes signal lists."""
+        @clocking(clock="clk")
+        class TestClocking:
+            pass
+
+        assert hasattr(TestClocking, "inputs")
+        assert hasattr(TestClocking, "outputs")
+        assert hasattr(TestClocking, "inouts")
+
+
+# ============================================================================
+# Tests: Modport Decorator
+# ============================================================================
+
+class TestModportDecorator:
+    """Test @modport decorator parameters."""
+
+    def test_modport_decorator_initializes_signal_lists(self):
+        """Test that @modport decorator initializes signal lists."""
+        @modport
+        class TestModport:
+            pass
+
+        assert hasattr(TestModport, "inputs")
+        assert hasattr(TestModport, "outputs")
+        assert hasattr(TestModport, "inouts")
+        assert hasattr(TestModport, "callables")
+
+    def test_modport_decorator_default_instance_count(self):
+        """Test that @modport decorator sets default instance count to 1."""
+        @modport
+        class TestModport:
+            pass
+
+        assert getattr(TestModport, "_instance_count", 1) == 1
+
+    def test_modport_decorator_with_type_argument(self):
+        """Test @modport decorator applied directly to class (without parens)."""
+        @modport
+        class TestModport:
+            inputs = ["a"]
+            outputs = ["b"]
+
+        assert getattr(TestModport, "_is_modport", False) is True
+
+
+# ============================================================================
+# Tests: Integration (Clocking + Modport)
+# ============================================================================
+
+class TestClockingModportIntegration:
+    """Test integration of clocking and modport features."""
+
+    def test_interface_with_multiple_clocking_blocks(self, mock_component):
+        """Test interface with multiple clocking blocks."""
+        class InterfaceWithMultiClocking(Interface):
+            signals = ["clk1", "clk2", "data"]
+
+            @clocking(clock="clk1")
+            class CK1:
+                inputs = ["data"]
+                outputs = []
+
+            @clocking(clock="clk2")
+            class CK2:
+                inputs = ["data"]
+                outputs = []
+
+        iface = InterfaceWithMultiClocking(
+            component=mock_component,
+            clk1=MockHandle("clk1"),
+            clk2=MockHandle("clk2"),
+            data=MockHandle("data")
+        )
+
+        assert isinstance(iface.CK1, ClockingBlock)
+        assert isinstance(iface.CK2, ClockingBlock)
+        assert iface.CK1._clk_handle._name == "clk1"
+        assert iface.CK2._clk_handle._name == "clk2"
+
+    def test_interface_with_multiple_modports_and_clocking(self, mock_component):
+        """Test interface with multiple modports linked to clocking."""
+        class InterfaceWithMultiModportClocking(Interface):
+            signals = ["clk", "data", "valid"]
+
+            @clocking(clock="clk")
+            class CK:
+                inputs = ["data"]
+                outputs = ["valid"]
+
+            @modport(clocking="CK")
+            class master:
+                inputs = []
+                outputs = ["data", "valid"]
+
+            @modport(clocking="CK")
+            class slave:
+                inputs = ["data", "valid"]
+                outputs = []
+
+        iface = InterfaceWithMultiModportClocking(
+            component=mock_component,
+            clk=MockHandle("clk"),
+            data=MockHandle("data"),
+            valid=MockHandle("valid")
+        )
+
+        master = iface.master
+        slave = iface.slave
+
+        assert hasattr(master, "cb")
+        assert hasattr(slave, "cb")
+        assert master.cb is iface.CK
+        assert slave.cb is iface.CK
+
+    def test_complex_interface_scenario(self, mock_component):
+        """Test complex real-world interface scenario."""
+        class AXILiteInterface(Interface):
+            signals = ["aclk", "aresetn", "awaddr", "awvalid", "awready",
+                      "wdata", "wvalid", "wready", "bvalid", "bready",
+                      "araddr", "arvalid", "arready", "rdata", "rvalid", "rready"]
+
+            def write_transaction(self, addr, data):
+                return f"write at {addr}: {data}"
+
+            def read_transaction(self, addr):
+                return f"read from {addr}"
+
+            @clocking(clock="aclk")
+            class cb:
+                inputs = ["awready", "wready", "bvalid", "arready", "rvalid", "rdata"]
+                outputs = ["awaddr", "awvalid", "wdata", "wvalid", "bready",
+                          "araddr", "arvalid", "rready"]
+
+            @modport(clocking="cb")
+            class master:
+                inputs = ["awready", "wready", "bvalid", "arready", "rvalid", "rdata"]
+                outputs = ["awaddr", "awvalid", "wdata", "wvalid", "bready",
+                          "araddr", "arvalid", "rready"]
+                callables = ["write_transaction", "read_transaction"]
+
+        iface = AXILiteInterface(
+            component=mock_component,
+            aclk=MockHandle("aclk"),
+            aresetn=MockHandle("aresetn"),
+            awaddr=MockHandle("awaddr"),
+            awvalid=MockHandle("awvalid"),
+            awready=MockHandle("awready"),
+            wdata=MockHandle("wdata"),
+            wvalid=MockHandle("wvalid"),
+            wready=MockHandle("wready"),
+            bvalid=MockHandle("bvalid"),
+            bready=MockHandle("bready"),
+            araddr=MockHandle("araddr"),
+            arvalid=MockHandle("arvalid"),
+            arready=MockHandle("arready"),
+            rdata=MockHandle("rdata"),
+            rvalid=MockHandle("rvalid"),
+            rready=MockHandle("rready")
+        )
+
+        master = iface.master
+        assert master.write_transaction(0x1000, 0xDEADBEEF) == "write at 4096: 3735928559"
+        assert master.read_transaction(0x1000) == "read from 4096"
+        assert hasattr(master, "cb")
+        from cocotbext.interface.interface import ClockedSignal
+        # modport exposes raw signals from interface
+        assert isinstance(master.awaddr, MockHandle)
+        # clocking block wraps signals in ClockedSignal
+        assert isinstance(master.cb.awaddr, ClockedSignal)
+        # ClockedSignal stores the MockHandle internally
+        assert master.cb.awaddr._handle is master.awaddr
