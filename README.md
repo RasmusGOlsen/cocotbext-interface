@@ -36,9 +36,32 @@ interface protocol.
 
 ### 2.1 The Interface Class
 
-Inherit from `Interface` and define a the signals. Mandatory signal are defined
-in the `signals` list and optional signals are defined in the `optional` list.
-These are the signal names that can be searched for in the RTL.
+To define a bus, inherit from the Interface class. Signals are now defined as
+class attributes using type hints, which determines whether they are required
+or optional during RTL binding.
+
+#### Defining Signals
+
+The framework uses the presence of a default value to distinguish between
+signal types:
+
+**Mandatory Signals**: Define these with a type hint (e.g., `LogicArrayObject`).
+If no default value is assigned, the framework will raise an error if the
+signal cannot be found in the RTL.
+
+**Optional Signals**: Assign None as a default value. This indicates that the
+signal may or may not exist in the design.
+
+```python
+class MyBus(Interface):
+    # Mandatory signal: Must be present in the RTL
+    data: LogicArrayObject
+
+    # Optional signal: Defaults to None if not found
+    rdy: LogicObject | None = None
+```
+
+These attribute names are used directly by the framework to search for matching signal names within the RTL hierarchy.
 
 ### 2.2 Defining Clocking Blocks
 
@@ -57,17 +80,22 @@ roles like `source`, `sink` or `monitor`.
 
 * `name`: Name of the modport
 * `clocking`: Name of the clocking block to link.
-* `inputs`/`outputs`: Lists of signals accessible in this modport.
-* `callables`: List of method names (APIs) exposed to this modport.
+* `Input`/`Output`/`InOut`: Signals accessible in this modport.
+* `Import`: Method names (APIs) exposed to this modport.
 
 ### 2.4 Complete Definition Example
 
 ```python
+from cocotb.handles import LogicArrayObject, LogicObject
 from cocotb.triggers import RisingEdge, FallingEdge, Timer
-from interface_framework import Interface, modport, clocking
+from interface_framework import Interface, modport, clocking, Import, Input, Output
 
 class AxiStream(Interface):
-    signals = ["clk", "rst_n", "tdata", "tvalid", "tready"]
+    clk:    LogicObject
+    rst_n:  LogicObject
+    tdata:  LogicArrayObject
+    tvalid: LogicObject
+    tready: LogicObject
 
     async def reset(self):
         self.rst_n.value = 0
@@ -77,23 +105,25 @@ class AxiStream(Interface):
     # Define Source-side timing
     @clocking(clock="clk", edge=RisingEdge, input=Timer(1, 'ns'), output=Timer(2, 'ns'))
     class source_cb:
-        inputs = ["tready"]
-        outputs = ["tdata", "tvalid"]
+        tready: Input[LogicObject]
+        tdata:  Output[LogicArrayObject]
+        tvalid: Output[LogicObject]
 
     # Define Sink-side timing
     @clocking(clock="clk", edge=RisingEdge, input=Timer(1, 'ns'))
     class sink_cb:
-        inputs = ["tdata", "tvalid"]
-        outputs = ["tready"]
+        tdata:  Input[LogicArrayObject]
+        tvalid: Input[LogicObject]
+        tready: Output[LogicObject]
 
     @modport(clocking="source_cb")
     class source:
-        outputs = ["rst_n"]
-        callables = ["reset"]
+        rst_n: Output[LogicObject]
+        reset: Import[Callable]
 
     @modport(clocking="sink_cb")
     class sink:
-        callables = ["reset"]
+        reset: Import[Callable]
 ```
 
 ---
@@ -105,26 +135,87 @@ test.
 
 ### 3.1 Instantiation & Connection
 
-The `pattern` argument is optional, but if used must contain the `%` wildcard.
-The `%` is substituted with each name in the `signals` and `optional` lists.
-You can also use globbing or regex (if wrapped in `/.../`).
+Interfaces are connected to the RTL using named constructors. These methods
+automatically map your class attributes to the corresponding signals in the HDL
+hierarchy.
+
+#### Connection Methods
+
+##### 1. Direct Mapping (`from_entity`)
+
+Use `from_entity` when the signal names in the RTL match your class attribute
+names exactly under a specific hierarchy level. This is a strict connection
+method that does not support overrides or pattern substitutions.
 
 ```python
-@cocotb.test()
-async def test_tx(dut):
-    # Pattern matching + Explicit Override
-    # Replaces % with signal names: e.g. 'u_axi_tdata'
-    bus = AxiStream(dut, pattern="u_axi_%", clk=dut.sys_clock)
+# Connects to dut.tdata and
+dut.rdy directly
+bus = MyBus.from_entity(dut)
 ```
 
-> [!TIP]
-> To confirm your signal are correctly connected and the interface, you can
-> the `bus` object to inspect it.
->
-> ```python
-> print(bus)
-> print(f"{bus=}")
-> ```
+##### 2. Explicit Assignment (`from_signal`)
+
+The `from_signal` constructor allows for manual binding of signal handles to
+attributes. This is used when signals do not follow a pattern or exist in
+different hierarchies.
+
+* **Behavior:** Uses keyword arguments to map handles to class attributes.
+* **Validation:** Still enforces that all mandatory signals defined in the
+  class are provided.
+
+```python
+# Manual connection: Explicitly pass handles for each attribute
+bus = MyBus.from_signal(
+    tdata = dut.top.data_bus,
+    rdy   = dut.extra_logic.ready_bit
+)
+```
+
+##### 3. Pattern Matching (`from_pattern`)
+
+The `from_pattern` method is used when signals follow a specific naming
+convention. The pattern argument must contain the % wildcard, which is
+substituted with each attribute name defined in your class.
+
+```python
+# Replaces % with attribute names: e.g. 'u_axi_tdata'
+bus = MyBus.from_pattern(dut, pattern="u_axi_%")
+```
+
+In addition to the % wildcard, `from_pattern` supports flexible discovery:
+
+* **Globbing:** Use * (any characters), ? (single character), or + (one or more
+  to match signals.
+* **Regex:** Wrap the pattern in /.../ (e.g., /u_axi_.*_%/) for complex matching
+  logic.
+
+```python
+# Simple substitution: Matches 'u_axi_tdata'
+bus = MyBus.from_pattern(dut, pattern="u_axi_%")
+
+# Globbing: Matches 'u_axi_0_tdata' or 'u_axi_stage1_tdata'
+bus = MyBus.from_pattern(dut, pattern="u_axi_*_%")
+
+# Regex: Matches signals with specific numeric suffixes
+bus = MyBus.from_pattern(dut, pattern="/u_axi_[0-9]_%/")
+```
+
+#### Advanced Pattern Options
+
+While `from_entity` is strict, `from_pattern` allows for flexibility when the
+RTL structure is non-standard:
+
+* **Keyword Overrides:** Pass a signal handle as a keyword argument to skip the
+  pattern search for that specific attribute.Indexing: Use the `idx` argument to
+  index into all signals discovered via the pattern (e.g., `dut.u_axi_tdata[1]`).
+
+```python
+# Connect to index 1 and manually override 'rdy'
+bus = MyBus.from_pattern(dut, pattern="u_axi_%", idx=1, rdy=dut.global_rdy)
+```
+
+> [!TIP] To confirm your signals are correctly bound, you can print `print(bus)`
+> or `print(f"{bus=}")` the bus object to inspect the resolved RTL paths.
 
 ### 3.2 Synchronous Driving (Non-Blocking)
 
@@ -151,8 +242,8 @@ while await bus.source.src_cb.tready.capture() == 0:
 
 ### 3.4 Using Interface APIs
 
-Methods defined in the interface and exposed in the modport `callables` can be
-called directly.
+Methods defined in the interface and imported in the modport can be called
+directly.
 
 ```python
 # Call the reset task defined by the VIP developer
