@@ -1,16 +1,26 @@
 from __future__ import annotations
+
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, TypeAlias, Union, Type, TypeVar, Generic, get_type_hints, Callable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,  # noqa # NOTE is used when evaluating modport declaration
+    Generic,
+    Type,
+    TypeAlias,
+    TypeVar,
+    Union,
+    get_type_hints,
+)
 
 import cocotb
-from cocotb.handle import HierarchyObject
-from cocotb.triggers import RisingEdge, ReadOnly, Timer
+from cocotb.handle import ArrayObject, HierarchyObject, LogicArrayObject, LogicObject
+from cocotb.triggers import RisingEdge
 
 from .utils import ReadOnlyManager
 
 if TYPE_CHECKING:
-    from cocotb.handle import LogicArrayObject, LogicObject, ArrayObject
     Signal: TypeAlias = Union[LogicObject, LogicArrayObject, ArrayObject]
 
 # --- 1. Directional Markers (Type Hints Only) ---
