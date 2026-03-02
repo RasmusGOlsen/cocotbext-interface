@@ -62,7 +62,7 @@ class ClockedSignal:
         cocotb.start_soon(self._drive_on_edge(val))
 
     async def _drive_on_edge(self, val):
-        await self._edge_type(self._clk)
+        await self._edge(self._clk)
         if self._output_skew is not None:
             await self._output_skew
         self._handle.value = val
