@@ -18,7 +18,7 @@ import cocotb
 from cocotb.handle import ArrayObject, HierarchyObject, LogicArrayObject, LogicObject
 from cocotb.triggers import RisingEdge
 
-from .utils import ReadOnlyManager
+from .utils import is_match, ReadOnlyManager
 
 if TYPE_CHECKING:
     Signal: TypeAlias = Union[LogicObject, LogicArrayObject, ArrayObject]
@@ -34,7 +34,7 @@ class Import(Generic[T]): ...
 class ClockedSignal:
     def __init__(
         self,
-        handle: Signal,
+        handle: Signal | None,
         clock: Signal,
         edge: Type,
         is_input,
@@ -51,15 +51,19 @@ class ClockedSignal:
     @property
     def value(self):
         """Getter for immediate (potentially unsafe) access."""
-        return self._handle.value
+        raise AttributeError(f"Use capture() to get the value of {self.__class__.__name__}")
 
     @value.setter
     def value(self, val):
         """
         Seamless Non-blocking Drive.
         Usage: cb.sig.value = 1
+
+        If signal handle is None it's an optional signal that is not connected
+        and we just ignore the value assignment.
         """
-        cocotb.start_soon(self._drive_on_edge(val))
+        if self._handle is not None:
+            cocotb.start_soon(self._drive_on_edge(val))
 
     async def _drive_on_edge(self, val):
         await self._edge(self._clk)
@@ -77,8 +81,8 @@ class ClockedSignal:
         else:
             # Instead of awaiting ReadOnly directly, we wait for the manager
             await ReadOnlyManager.wait()
-
-        return self._handle.value
+        if self._handle is not None:
+            return self._handle.value
 
     def __getattr__(self, name):
         """Forward other cocotb handle methods (like ._name, etc)"""
@@ -104,9 +108,9 @@ class ClockingBlock:
             raw_handle = getattr(parent, name, None)
 
             # 1. Handle Optional Signals: If raw_handle is None, keep it None
-            if raw_handle is None:
-                setattr(self, name, None)
-                continue
+            # if raw_handle is None:
+            #     setattr(self, name, None)
+            #     continue
 
             # 2. Determine Directionality: Use the Generic 'origin'
             origin = getattr(_type, "__origin__", None)
@@ -275,7 +279,7 @@ class Interface:
             # 2. Pattern search
             if pattern is not None:
                 target = pattern.replace("%", name)
-                handle = getattr(parent, target, None)
+                handle = cls._getattr_pattern(parent, target, None)
 
             # Apply indexing
             if handle is not None and idx is not None:
@@ -293,6 +297,13 @@ class Interface:
                 signals[name] = handle
 
         return cls(signals, index=idx)
+
+    @classmethod
+    def _getattr_pattern(cls, parent: HierarchyObject | None, pattern: str, default=None):
+        for attr in dir(parent):
+            if is_match(pattern, attr):
+                return getattr(parent, attr)
+        return default
 
     def _create_clocking(self):
         for name, attr in inspect.getmembers(self.__class__, inspect.isclass):
