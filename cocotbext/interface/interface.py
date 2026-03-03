@@ -17,11 +17,14 @@ from typing import (
 import cocotb
 from cocotb.handle import ArrayObject, HierarchyObject, LogicArrayObject, LogicObject
 from cocotb.triggers import RisingEdge
+from cocotb.types import Logic, LogicArray
 
 from .utils import is_match, ReadOnlyManager
 
 if TYPE_CHECKING:
     Signal: TypeAlias = Union[LogicObject, LogicArrayObject, ArrayObject]
+
+logger = logging.getLogger(__name__)
 
 # --- 1. Directional Markers (Type Hints Only) ---
 T = TypeVar("T")
@@ -71,10 +74,12 @@ class ClockedSignal:
             await self._output_skew
         self._handle.value = val
 
-    async def capture(self):
+    async def capture(self, resolver=None, default: Any = None):
         """
         Synchronized Sample (Input Skew).
         Uses a shared ReadOnly manager to prevent scheduler errors.
+        resolver: Use to resolve conneced signal
+        default: Default value for unconnected signals
         """
         if self._input_skew is not None:
             await self._input_skew
@@ -82,7 +87,13 @@ class ClockedSignal:
             # Instead of awaiting ReadOnly directly, we wait for the manager
             await ReadOnlyManager.wait()
         if self._handle is not None:
-            return self._handle.value
+            value = self._handle.value
+            if resolver:
+                if isinstance(value, (Logic, LogicArray)):
+                    return value.resolve(resolver)
+                else:
+                    logger.warning(f"{self._handle} is not resolvable")
+            return value
 
     def __getattr__(self, name):
         """Forward other cocotb handle methods (like ._name, etc)"""
