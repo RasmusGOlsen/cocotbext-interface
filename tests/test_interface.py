@@ -99,6 +99,10 @@ class MockHierarchy:
             return super().__getattribute__(name)
         return self._children.get(name)
 
+    def __dir__(self):
+        """Support dir() for signal discovery."""
+        return list(super().__dir__()) + list(self._children.keys())
+
 
 @pytest.fixture
 def mock_hierarchy():
@@ -241,6 +245,36 @@ class TestFactoryMethods:
 
         # All signals should be indexed (unless not arrays)
         assert iface.clk._name == "clk"
+
+        # bus_data IS an array signal in the fixture
+        class BusInterface(Interface):
+            bus_data: Input[object]
+
+        iface_bus = BusInterface.from_pattern(mock_hierarchy, pattern="%", idx=3)
+        assert iface_bus.bus_data._name == "bus_data[3]"
+
+    def test_optional_signal_no_leak(self, mock_hierarchy):
+        """Verify that optional signals don't inherit the handle of a previous signal."""
+        class LeakInterface(Interface):
+            clk: Output[object]
+            non_existent: Input[object] = None
+
+        iface = LeakInterface.from_entity(mock_hierarchy)
+        assert iface.clk._name == "clk"
+        assert iface.non_existent is None
+
+    def test_from_signal_basic(self):
+        """Test from_signal with direct handle passing."""
+        h1 = MockHandle("h1")
+        h2 = MockHandle("h2")
+
+        class SigInterface(Interface):
+            s1: Input[object]
+            s2: Input[object]
+
+        iface = SigInterface.from_signal(s1=h1, s2=h2)
+        assert iface.s1 is h1
+        assert iface.s2 is h2
 
 
 # ============================================================================
