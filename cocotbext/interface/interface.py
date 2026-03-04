@@ -269,18 +269,18 @@ class Interface:
 
     @classmethod
     def from_signal(cls, **kwargs):
-        return cls.from_pattern(parent=None, pattern=None, idx=None)
+        return cls.from_pattern(parent=None, pattern=None, idx=None, **kwargs)
 
     @classmethod
-    def from_entity(cls, handle: HierarchyObject):
+    def from_entity(cls, handle: HierarchyObject, idx: int | None= None):
         return cls.from_pattern(parent=handle, pattern="%", idx=None)
 
     @classmethod
     def from_pattern(cls, parent: HierarchyObject | None, pattern: str | None = "%", idx: int | None = None, **kwargs):
         requirements = cls._get_requirements()
         signals = {}
-        handle = None
         for name, default in requirements.items():
+            handle = None
             target = name
             # 1. Kwarg override
             if name in kwargs:
@@ -311,6 +311,16 @@ class Interface:
 
     @classmethod
     def _getattr_pattern(cls, parent: HierarchyObject | None, pattern: str, default=None):
+        if parent is None:
+            return default
+
+        # 1. Direct access (fastest and most robust)
+        try:
+            return getattr(parent, pattern)
+        except AttributeError:
+            pass
+
+        # 2. Pattern matching
         for attr in dir(parent):
             if is_match(pattern, attr):
                 return getattr(parent, attr)
