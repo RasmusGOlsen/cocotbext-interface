@@ -37,4 +37,5 @@ version = { attr = "cocotbext.interface._version.__version__" }
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
+    "pytest-cov>=5.0.0",
 ]
