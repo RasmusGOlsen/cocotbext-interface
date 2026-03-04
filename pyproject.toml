@@ -9,9 +9,10 @@ maintainers = [
 authors = [
   { name = "Rasmus Grøndahl Olsen", email = "simplhdl@gmail.com" },
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.8,<3.14"
 classifiers = [
   "Development Status :: 4 - Beta",
+  "Framework :: cocotb",
   "Intended Audience :: Developers",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
@@ -21,21 +22,29 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
 ]
 
 dynamic = [ "version" ]
 dependencies = [
-    "cocotb>=2",
+  "cocotb>=2",
+]
+
+[dependency-groups]
+dev = [
+  "pre-commit>=3.5",
+  "pytest>=8.3.5",
+  "pytest-cov>=5",
 ]
 
 [tool.setuptools.dynamic]
 version = { attr = "cocotbext.interface._version.__version__" }
 
-[dependency-groups]
-dev = [
-    "pytest>=8.3.5",
-    "pytest-cov>=5.0.0",
+[tool.codespell]
+ignore-words-list = "InOut"
+
+[tool.coverage.run]
+omit = [
+  "*/prototypes/*",
 ]

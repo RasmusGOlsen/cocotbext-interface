@@ -1,10 +1,9 @@
 from abc import ABC, abstractmethod
 
-from .interface import Interface
+from ..interface import Interface
 
 
 class MemoryMappedInterface(Interface, ABC):
-
     @abstractmethod
     async def read(self, address, size=4, **kwargs):
         """Basic blocking read. Returns data."""

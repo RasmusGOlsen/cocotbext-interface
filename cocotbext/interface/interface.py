@@ -8,30 +8,46 @@ from typing import (
     Callable,  # noqa # NOTE is used when evaluating modport declaration
     Generic,
     Type,
-    TypeAlias,
     TypeVar,
     Union,
     get_type_hints,
 )
 
 import cocotb
-from cocotb.handle import ArrayObject, HierarchyObject, LogicArrayObject, LogicObject
 from cocotb.triggers import RisingEdge
 from cocotb.types import Logic, LogicArray
+from cocotb.handle import (
+    # NOTE is used when evaluating modport declaration
+    ArrayObject,
+    HierarchyObject,
+    LogicArrayObject,
+    LogicObject,
+)
 
-from .utils import is_match, ReadOnlyManager
+from .utils import ReadOnlyManager, is_match
 
 if TYPE_CHECKING:
+    from typing import TypeAlias
+
     Signal: TypeAlias = Union[LogicObject, LogicArrayObject, ArrayObject]
 
 logger = logging.getLogger(__name__)
 
 # --- 1. Directional Markers (Type Hints Only) ---
 T = TypeVar("T")
+
+
 class Input(Generic[T]): ...
+
+
 class Output(Generic[T]): ...
+
+
 class InOut(Generic[T]): ...
+
+
 class Import(Generic[T]): ...
+
 
 # --- 2. Synchronous Signal Wrapper ---
 class ClockedSignal:
@@ -42,7 +58,7 @@ class ClockedSignal:
         edge: Type,
         is_input,
         input_skew: Any = None,
-        output_skew: Any = None
+        output_skew: Any = None,
     ):
         self._handle = handle
         self._clk = clock
@@ -54,7 +70,9 @@ class ClockedSignal:
     @property
     def value(self):
         """Getter for immediate (potentially unsafe) access."""
-        raise AttributeError(f"Use capture() to get the value of {self.__class__.__name__}")
+        raise AttributeError(
+            f"Use capture() to get the value of {self.__class__.__name__}"
+        )
 
     @value.setter
     def value(self, val):
@@ -78,7 +96,7 @@ class ClockedSignal:
         """
         Synchronized Sample (Input Skew).
         Uses a shared ReadOnly manager to prevent scheduler errors.
-        resolver: Use to resolve conneced signal
+        resolver: Use to resolve connected signal
         default: Default value for unconnected signals
         """
         if self._input_skew is not None:
@@ -99,6 +117,7 @@ class ClockedSignal:
         """Forward other cocotb handle methods (like ._name, etc)"""
         return getattr(self._handle, name)
 
+
 # --- 3. Functional Views ---
 class ClockingBlock:
     def __init__(self, parent: Interface, cb_cls: type):
@@ -109,7 +128,9 @@ class ClockingBlock:
         self._edge = getattr(cb_cls, "_edge_type", RisingEdge)
 
         if self._clk is None:
-            raise AttributeError(f"ClockingBlock '{cb_cls.__name__}' references missing clock '{self._clk_name}'")
+            raise AttributeError(
+                f"ClockingBlock '{cb_cls.__name__}' references missing clock '{self._clk_name}'"
+            )
 
         # Resolve type hints for the nested class
         hints = get_type_hints(cb_cls, globalns=globals())
@@ -125,15 +146,19 @@ class ClockingBlock:
 
             # 2. Determine Directionality: Use the Generic 'origin'
             origin = getattr(_type, "__origin__", None)
-            is_input = (origin is Input)
+            is_input = origin is Input
 
             # 3. Wrap in ClockedSignal: This provides the .value setter and .capture() method
-            setattr(self, name, ClockedSignal(
-                handle=raw_handle,
-                clock=self._clk,
-                edge=self._edge,
-                is_input=is_input
-            ))
+            setattr(
+                self,
+                name,
+                ClockedSignal(
+                    handle=raw_handle,
+                    clock=self._clk,
+                    edge=self._edge,
+                    is_input=is_input,
+                ),
+            )
 
     async def wait(self, cycles: int = 1):
         """Standard ##N delay logic."""
@@ -141,8 +166,12 @@ class ClockingBlock:
             await self._edge(self._clk)
 
     def __str__(self) -> str:
-        edge_name = self._edge.__name__ if hasattr(self._edge, "__name__") else str(self._edge)
-        lines = [f"ClockingBlock: {self._parent.__class__.__name__}.cb (Ref: {self._clk_name} @ {edge_name})"]
+        edge_name = (
+            self._edge.__name__ if hasattr(self._edge, "__name__") else str(self._edge)
+        )
+        lines = [
+            f"ClockingBlock: {self._parent.__class__.__name__}.cb (Ref: {self._clk_name} @ {edge_name})"
+        ]
 
         for name, attr in self.__dict__.items():
             if not name.startswith("_"):
@@ -150,14 +179,17 @@ class ClockingBlock:
                     lines.append(f"  {name:15} : None (Optional)")
                 elif isinstance(attr, ClockedSignal):
                     try:
-                        val = attr.value # Immediate sample
-                    except:
+                        val = attr.value  # Immediate sample
+                    except AttributeError:
                         val = "X"
                     lines.append(f"  {name:15} : {val}")
         return "\n".join(lines)
 
     def __repr__(self) -> str:
-        return f"<ClockingBlock {self._parent.__class__.__name__}.cb @ {self._clk_name}>"
+        return (
+            f"<ClockingBlock {self._parent.__class__.__name__}.cb @ {self._clk_name}>"
+        )
+
 
 class ModportView:
     def __init__(self, parent: Interface, mp_cls: type, index: int | None = None):
@@ -208,11 +240,15 @@ class ModportView:
             if hasattr(parent, cb_name):
                 setattr(self, "cb", getattr(parent, cb_name))
             else:
-                logging.warning(f"Modport {mp_cls.__name__} refers to missing clocking block '{cb_name}'")
+                logging.warning(
+                    f"Modport {mp_cls.__name__} refers to missing clocking block '{cb_name}'"
+                )
 
     def __str__(self) -> str:
         idx_str = f"[{self._index}]" if self._index is not None else ""
-        lines = [f"Modport View: {self._parent.__class__.__name__}.{self.__class__.__name__}{idx_str}"]
+        lines = [
+            f"Modport View: {self._parent.__class__.__name__}.{self.__class__.__name__}{idx_str}"
+        ]
 
         # Filter internal attributes for a clean print
         for name in self.__dict__:
@@ -227,21 +263,25 @@ class ModportView:
         idx_info = f"[{self._index}]" if self._index is not None else ""
         return f"<ModportView {self._parent.__class__.__name__}{idx_info}>"
 
+
 # --- 4. Decorators ---
 def clocking(clock: str, edge=RisingEdge):
     def decorator(cls):
         cls._is_clocking, cls._clock_name, cls._edge_type = True, clock, edge
         return cls
+
     return decorator
 
-def modport(clocking: str = None, callables: list[str] = None, count: int = 1):
+
+def modport(clocking: str = None, count: int = 1):
     def decorator(cls):
         cls._is_modport = True
         cls._clocking_name = clocking
-        cls._callables = callables or []
         cls._count = count
         return cls
+
     return decorator
+
 
 # --- 5. The Base Interface ---
 class Interface:
@@ -261,7 +301,8 @@ class Interface:
         # Class attributes tell us if there is a DEFAULT (like None)
         requirements = {}
         for name in hints:
-            if name.startswith("_"): continue
+            if name.startswith("_"):
+                continue
             # If the class has the attribute, it's the default value.
             # Otherwise, it's 'Required' (we use a sentinel).
             requirements[name] = getattr(cls, name, "...REQUIRED...")
@@ -272,11 +313,17 @@ class Interface:
         return cls.from_pattern(parent=None, pattern=None, idx=None, **kwargs)
 
     @classmethod
-    def from_entity(cls, handle: HierarchyObject, idx: int | None= None):
+    def from_entity(cls, handle: HierarchyObject, idx: int | None = None):
         return cls.from_pattern(parent=handle, pattern="%", idx=None)
 
     @classmethod
-    def from_pattern(cls, parent: HierarchyObject | None, pattern: str | None = "%", idx: int | None = None, **kwargs):
+    def from_pattern(
+        cls,
+        parent: HierarchyObject | None,
+        pattern: str | None = "%",
+        idx: int | None = None,
+        **kwargs,
+    ):
         requirements = cls._get_requirements()
         signals = {}
         for name, default in requirements.items():
@@ -302,7 +349,9 @@ class Interface:
             # 3. Validation
             if handle is None:
                 if default == "...REQUIRED...":
-                    raise AttributeError(f"Required signal '{name}' (target: {target}) not found.")
+                    raise AttributeError(
+                        f"Required signal '{name}' (target: {target}) not found."
+                    )
                 signals[name] = default
             else:
                 signals[name] = handle
@@ -310,7 +359,9 @@ class Interface:
         return cls(signals, index=idx)
 
     @classmethod
-    def _getattr_pattern(cls, parent: HierarchyObject | None, pattern: str, default=None):
+    def _getattr_pattern(
+        cls, parent: HierarchyObject | None, pattern: str, default=None
+    ):
         if parent is None:
             return default
 
@@ -336,7 +387,9 @@ class Interface:
             if getattr(attr, "_is_modport", False):
                 count = getattr(attr, "_count", 1)
                 if count > 1:
-                    setattr(self, name, [ModportView(self, attr, i) for i in range(count)])
+                    setattr(
+                        self, name, [ModportView(self, attr, i) for i in range(count)]
+                    )
                 else:
                     setattr(self, name, ModportView(self, attr))
 
@@ -359,5 +412,7 @@ class Interface:
     def __repr__(self) -> str:
         """Developer-friendly one-liner."""
         sig_count = len(self._signals_list)
-        idx_info = f"idx={self._index}" if getattr(self, "_index", None) is not None else "top"
+        idx_info = (
+            f"idx={self._index}" if getattr(self, "_index", None) is not None else "top"
+        )
         return f"<{self.__class__.__name__} ({idx_info}, {sig_count} signals)>"
