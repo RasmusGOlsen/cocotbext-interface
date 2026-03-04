@@ -97,7 +97,10 @@ class MockHierarchy:
         """Allow accessing signals as attributes (dut.clk)."""
         if name.startswith("_"):
             return super().__getattribute__(name)
-        return self._children.get(name)
+        val = self._children.get(name)
+        if val is None:
+            raise AttributeError(f"MockHierarchy has no signal '{name}'")
+        return val
 
     def __dir__(self):
         """Support dir() for signal discovery."""
@@ -252,6 +255,16 @@ class TestFactoryMethods:
 
         iface_bus = BusInterface.from_pattern(mock_hierarchy, pattern="%", idx=3)
         assert iface_bus.bus_data._name == "bus_data[3]"
+
+    def test_from_pattern_regex(self, mock_hierarchy):
+        """Test creating Interface from a regex pattern."""
+        class RegExInterface(Interface):
+            ready: Input[object]
+
+        # mock_hierarchy has 'ready'
+        # Pattern '/r.ady/' matches 'ready'
+        iface = RegExInterface.from_pattern(mock_hierarchy, pattern="/r.ady/")
+        assert iface.ready._name == "ready"
 
     def test_optional_signal_no_leak(self, mock_hierarchy):
         """Verify that optional signals don't inherit the handle of a previous signal."""
