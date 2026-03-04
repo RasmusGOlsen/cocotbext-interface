@@ -4,6 +4,7 @@ from cocotb.utils import get_sim_time
 import re
 from functools import lru_cache
 
+
 @lru_cache(maxsize=128)
 def _get_compiled_pattern(expr: str):
     if expr.startswith("/") and expr.endswith("/"):

@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .interface import Interface
+from ..interface import Interface
 
 
 class StreamInterface(Interface, ABC):

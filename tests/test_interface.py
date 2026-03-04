@@ -6,7 +6,7 @@ Tests cover the new API using type hints, factory methods, and nested class deco
 
 import asyncio
 import inspect
-from typing import Iterator
+from typing import Callable, Iterator
 
 import pytest
 
@@ -29,26 +29,30 @@ from cocotb.triggers import RisingEdge, FallingEdge
 # Global Mocking for cocotb scheduler
 # ============================================================================
 
+
 @pytest.fixture(autouse=True)
 def mock_cocotb_scheduler(monkeypatch):
     """Auto-patch cocotb.start_soon to avoid scheduler errors in tests.
 
     Properly closes coroutines to avoid RuntimeWarning about unawaited coroutines.
     """
+
     def mock_start_soon(coro):
         # If it's a coroutine, close it properly to avoid warning
         if inspect.iscoroutine(coro):
             coro.close()
 
-    monkeypatch.setattr('cocotb.start_soon', mock_start_soon)
+    monkeypatch.setattr("cocotb.start_soon", mock_start_soon)
 
 
 # ============================================================================
 # Mock Fixtures for cocotb dependencies
 # ============================================================================
 
+
 class MockHandle:
     """Mock for cocotb handle with a name and optional array support."""
+
     def __init__(self, name: str, is_array: bool = False, array_size: int = 4):
         self._name = name
         self._is_array = is_array
@@ -82,12 +86,15 @@ class MockHandle:
 
 class MockHierarchy:
     """Mock for HierarchyObject that acts as a container of handles."""
+
     def __init__(self):
         self._children: dict[str, MockHandle] = {}
 
     def add_signal(self, name: str, is_array: bool = False, array_size: int = 4):
         """Add a signal to the hierarchy."""
-        self._children[name] = MockHandle(name, is_array=is_array, array_size=array_size)
+        self._children[name] = MockHandle(
+            name, is_array=is_array, array_size=array_size
+        )
 
     def __iter__(self) -> Iterator[MockHandle]:
         """Iterate over all signals in the hierarchy."""
@@ -126,16 +133,19 @@ def mock_hierarchy():
 # Test Interface Definitions (using the new API)
 # ============================================================================
 
+
 class SimpleInterface(Interface):
     """Simple test interface with required and optional signals."""
+
     clk: Output[object]
     rst: Output[object]
-    data_in: Input[object]
+    data: InOut[object]
     status: Input[object] = None  # Optional signal
 
 
 class InterfaceWithModport(Interface):
     """Test interface with modport."""
+
     clk: Output[object]
     data: Input[object]
 
@@ -143,10 +153,18 @@ class InterfaceWithModport(Interface):
     class master:
         data: Output[object]
         clk: Input[object]
+        send: Import[Callable]
+
+    def send(self) -> None:
+        pass
+
+    def receive(self) -> None:
+        pass
 
 
 class InterfaceWithClocking(Interface):
     """Test interface with clocking block."""
+
     clk: Output[object]
     data: Input[object]
     valid: Input[object]
@@ -159,6 +177,7 @@ class InterfaceWithClocking(Interface):
 
 class InterfaceWithMultipleModports(Interface):
     """Test interface with multiple modport instances."""
+
     clk: Output[object]
     data_in: Input[object]
     data_out: Output[object]
@@ -171,6 +190,7 @@ class InterfaceWithMultipleModports(Interface):
 
 class InterfaceWithModportAndClocking(Interface):
     """Test interface with modport linked to clocking block."""
+
     clk: Output[object]
     data: Input[object]
     valid: Output[object]
@@ -190,6 +210,7 @@ class InterfaceWithModportAndClocking(Interface):
 # Tests: Factory Methods (from_entity, from_pattern)
 # ============================================================================
 
+
 class TestFactoryMethods:
     """Test Interface factory methods."""
 
@@ -199,7 +220,7 @@ class TestFactoryMethods:
 
         assert iface.clk._name == "clk"
         assert iface.rst._name == "rst"
-        assert iface.data_in._name == "data_in"
+        assert iface.data._name == "data"
 
     def test_from_entity_optional_signal(self, mock_hierarchy):
         """Test optional signal behavior with from_entity."""
@@ -224,15 +245,13 @@ class TestFactoryMethods:
 
         assert iface.clk._name == "clk"
         assert iface.rst._name == "rst"
-        assert iface.data_in._name == "data_in"
+        assert iface.data._name == "data"
 
     def test_from_pattern_with_kwargs_override(self, mock_hierarchy):
         """Test that kwargs override pattern matching."""
         custom_clk = MockHandle("custom_clk")
         iface = SimpleInterface.from_pattern(
-            mock_hierarchy,
-            pattern="%",
-            clk=custom_clk
+            mock_hierarchy, pattern="%", clk=custom_clk
         )
 
         assert iface.clk is custom_clk
@@ -240,11 +259,7 @@ class TestFactoryMethods:
 
     def test_from_pattern_with_index(self, mock_hierarchy):
         """Test pattern matching with array indexing."""
-        iface = SimpleInterface.from_pattern(
-            mock_hierarchy,
-            pattern="%",
-            idx=2
-        )
+        iface = SimpleInterface.from_pattern(mock_hierarchy, pattern="%", idx=2)
 
         # All signals should be indexed (unless not arrays)
         assert iface.clk._name == "clk"
@@ -258,6 +273,7 @@ class TestFactoryMethods:
 
     def test_from_pattern_regex(self, mock_hierarchy):
         """Test creating Interface from a regex pattern."""
+
         class RegExInterface(Interface):
             ready: Input[object]
 
@@ -268,6 +284,7 @@ class TestFactoryMethods:
 
     def test_optional_signal_no_leak(self, mock_hierarchy):
         """Verify that optional signals don't inherit the handle of a previous signal."""
+
         class LeakInterface(Interface):
             clk: Output[object]
             non_existent: Input[object] = None
@@ -294,6 +311,7 @@ class TestFactoryMethods:
 # Tests: Basic Signal Access
 # ============================================================================
 
+
 class TestBasicSignalAccess:
     """Test basic signal access via interface."""
 
@@ -308,6 +326,18 @@ class TestBasicSignalAccess:
         iface = SimpleInterface.from_entity(mock_hierarchy)
         iface.clk.value = 99
         assert mock_hierarchy._children["clk"].value == 99
+
+    def test_signal_value_read_inout(self, mock_hierarchy):
+        """Test reading signal value in InOut"""
+        mock_hierarchy._children["data"]._value = 21
+        iface = SimpleInterface.from_entity(mock_hierarchy)
+        assert iface.data.value == 21
+
+    def test_signal_value_write_inout(self, mock_hierarchy):
+        """Test writing signal value."""
+        iface = SimpleInterface.from_entity(mock_hierarchy)
+        iface.data.value = 53
+        assert mock_hierarchy._children["data"].value == 53
 
     def test_str_representation(self, mock_hierarchy):
         """Test __str__ method."""
@@ -327,6 +357,7 @@ class TestBasicSignalAccess:
 # Tests: Modports
 # ============================================================================
 
+
 class TestModports:
     """Test modport creation and functionality."""
 
@@ -345,6 +376,22 @@ class TestModports:
 
         assert hasattr(master, "data")
         assert hasattr(master, "clk")
+
+    def test_modport_contains_callable(self, mock_hierarchy):
+        """Test that modport contains the mapped callable."""
+        iface = InterfaceWithModport.from_entity(mock_hierarchy)
+        master = iface.master
+
+        assert hasattr(iface, "send")
+        assert hasattr(master, "send")
+
+    def test_modport_dont_contains_callable(self, mock_hierarchy):
+        """Test that modport contains the mapped callable."""
+        iface = InterfaceWithModport.from_entity(mock_hierarchy)
+        master = iface.master
+
+        assert hasattr(iface, "receive")
+        assert not hasattr(master, "receive")
 
     def test_modport_repr(self, mock_hierarchy):
         """Test modport __repr__."""
@@ -380,6 +427,7 @@ class TestModports:
 # ============================================================================
 # Tests: Clocking Blocks
 # ============================================================================
+
 
 class TestClockingBlocks:
     """Test clocking block creation and functionality."""
@@ -431,6 +479,7 @@ class TestClockingBlocks:
 # Tests: ClockedSignal
 # ============================================================================
 
+
 class TestClockedSignal:
     """Test ClockedSignal synchronous signal wrapper."""
 
@@ -441,7 +490,7 @@ class TestClockedSignal:
             handle=mock_hierarchy._children["clk"],
             clock=mock_hierarchy._children["clk"],
             edge=RisingEdge,
-            is_input=False
+            is_input=False,
         )
         assert cs.value == 42
 
@@ -451,13 +500,12 @@ class TestClockedSignal:
             handle=mock_hierarchy._children["clk"],
             clock=mock_hierarchy._children["clk"],
             edge=RisingEdge,
-            is_input=False
+            is_input=False,
         )
         # Set value (in tests, this just calls mocked cocotb.start_soon)
         cs.value = 99
         # ClockedSignal value setter doesn't directly update; it schedules it
         # Just verify no exception was raised
-
 
     def test_clocked_signal_attribute_forwarding(self, mock_hierarchy):
         """Test that ClockedSignal forwards attributes to handle."""
@@ -465,7 +513,7 @@ class TestClockedSignal:
             handle=mock_hierarchy._children["clk"],
             clock=mock_hierarchy._children["clk"],
             edge=RisingEdge,
-            is_input=False
+            is_input=False,
         )
         # _name should be forwarded to the handle
         assert cs._name == "clk"
@@ -476,7 +524,7 @@ class TestClockedSignal:
             handle=mock_hierarchy._children["data_in"],
             clock=mock_hierarchy._children["clk"],
             edge=RisingEdge,
-            is_input=True
+            is_input=True,
         )
         assert cs_rising._edge is RisingEdge
 
@@ -484,7 +532,7 @@ class TestClockedSignal:
             handle=mock_hierarchy._children["data_in"],
             clock=mock_hierarchy._children["clk"],
             edge=FallingEdge,
-            is_input=True
+            is_input=True,
         )
         assert cs_falling._edge is FallingEdge
 
@@ -494,7 +542,7 @@ class TestClockedSignal:
             handle=mock_hierarchy._children["data_in"],
             clock=mock_hierarchy._children["clk"],
             edge=RisingEdge,
-            is_input=True
+            is_input=True,
         )
         assert cs_input._is_input is True
 
@@ -502,12 +550,13 @@ class TestClockedSignal:
             handle=mock_hierarchy._children["data_out"],
             clock=mock_hierarchy._children["clk"],
             edge=RisingEdge,
-            is_input=False
+            is_input=False,
         )
         assert cs_output._is_input is False
 
     def test_clocked_signal_capture_multiple(self, mock_hierarchy):
         """Test capturing multiple signals without scheduler error."""
+
         async def inner():
             # Create ClockedSignals for multiple handles
             h1 = MockHandle("sig1")
@@ -532,6 +581,7 @@ class TestClockedSignal:
 # ============================================================================
 # Tests: Modport + Clocking Integration
 # ============================================================================
+
 
 class TestModportClockingIntegration:
     """Test modport linked to clocking block."""
@@ -561,6 +611,7 @@ class TestModportClockingIntegration:
 # Tests: Type Hints and Directionality
 # ============================================================================
 
+
 class TestTypeHintsAndDirectionality:
     """Test that Input/Output type hints work correctly."""
 
@@ -589,20 +640,18 @@ class TestTypeHintsAndDirectionality:
 # Tests: Edge Cases
 # ============================================================================
 
+
 class TestEdgeCases:
     """Test edge cases and error handling."""
 
     def test_interface_with_index(self, mock_hierarchy):
         """Test Interface with index parameter."""
-        iface = SimpleInterface.from_pattern(
-            mock_hierarchy,
-            pattern="%",
-            idx=1
-        )
+        iface = SimpleInterface.from_pattern(mock_hierarchy, pattern="%", idx=1)
         assert iface._index == 1
 
     def test_interface_missing_clocking_reference(self, mock_hierarchy):
         """Test modport with non-existent clocking block reference."""
+
         # Create interface, but don't define the clocking block that modport refers to
         class BrokenInterface(Interface):
             clk: Output[object]
@@ -613,11 +662,12 @@ class TestEdgeCases:
                 data: Input[object]
 
         # Should not raise during creation, but warn when accessing
-        iface = BrokenInterface.from_entity(mock_hierarchy)
+        _ = BrokenInterface.from_entity(mock_hierarchy)
         # Just verify it doesn't crash immediately
 
     def test_empty_interface(self, mock_hierarchy):
         """Test interface with no signals."""
+
         class EmptyInterface(Interface):
             pass
 
