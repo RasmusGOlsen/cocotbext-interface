@@ -32,7 +32,7 @@ from cocotb.triggers import RisingEdge, FallingEdge
 
 @pytest.fixture(autouse=True)
 def mock_cocotb_scheduler(monkeypatch):
-    """Auto-patch cocotb.start_soon to avoid scheduler errors in tests.
+    """Auto-patch cocotb.start_soon and ReadOnlyManager to avoid scheduler errors in tests.
 
     Properly closes coroutines to avoid RuntimeWarning about unawaited coroutines.
     """
@@ -42,7 +42,11 @@ def mock_cocotb_scheduler(monkeypatch):
         if inspect.iscoroutine(coro):
             coro.close()
 
+    async def mock_wait():
+        pass
+
     monkeypatch.setattr("cocotb.start_soon", mock_start_soon)
+    monkeypatch.setattr("cocotbext.interface.interface.ReadOnlyManager.wait", mock_wait)
 
 
 # ============================================================================
@@ -574,6 +578,24 @@ class TestClockedSignal:
 
             assert val1 == 11
             assert val2 == 22
+
+        asyncio.run(inner())
+
+    def test_clocked_signal_capture_default(self, mock_hierarchy):
+        """Test capturing with a default value for unconnected signals."""
+
+        async def inner():
+            clk = mock_hierarchy._children["clk"]
+            # Signal with no handle
+            cs = ClockedSignal(None, clk, RisingEdge, is_input=True)
+
+            # Capture should return the default value
+            val = await cs.capture(default=123)
+            assert val == 123
+
+            # Capture without default should return None
+            val_none = await cs.capture()
+            assert val_none is None
 
         asyncio.run(inner())
 
