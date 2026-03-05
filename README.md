@@ -1,7 +1,7 @@
 # Interface Documentation
 
 [![CI Status](https://github.com/RasmusGOlsen/cocotbext-interface/actions/workflows/ci.yml/badge.svg)](https://github.com/RasmusGOlsen/cocotbext-interface/actions)
-[![codecov](https://codecov.io/gh/RasmusGOlsen/cocotbext-interface/branch/main/graph/badge.svg)](https://codecov.io/gh/RasmusGOlsen/cocotbext-interface)
+[![codecov](https://codecov.io/gh/RasmusGOlsen/cocotbext-interface/graph/badge.svg?token=24GVY2TN6N)](https://app.codecov.io/gh/RasmusGOlsen/cocotbext-interface/tree/main)
 [![PyPI version](https://img.shields.io/pypi/v/cocotbext-interface.svg)](https://pypi.org/project/cocotbext-interface/)
 [![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
