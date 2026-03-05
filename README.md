@@ -199,8 +199,10 @@ bus = MyBus.from_pattern(dut, pattern="/u_axi_[0-9]_%/")
 
 While `from_entity` is strict, `from_pattern` allows for flexibility when the RTL structure is non-standard:
 
-- **Keyword Overrides:** Pass a signal handle as a keyword argument to skip the pattern search for that specific attribute.
-- **Indexing:** Use the `idx` argument to index into all signals discovered via the pattern (e.g., `dut.u_axi_tdata[1]`).
+- **Keyword Overrides:** Pass a signal handle as a keyword argument to skip the pattern search for that specific
+  attribute.
+- **Indexing:** Use the `idx` argument to index into all signals discovered via the pattern (e.g.,
+  `dut.u_axi_tdata[1]`).
 
 ```python
 # Connect to index 1 and manually override 'rdy'
@@ -228,8 +230,8 @@ edge and the defined input skew before returning the value.
 
 The `capture()` method accepts two optional arguments:
 
-- **`resolver`**: A resolution function (e.g., `cocotb.types.Logic.resolve`) to resolve 4-state logic values ('X', 'Z') to
-  a simpler 2-state representation.
+- **`resolver`**: A resolution function (e.g., `cocotb.types.Logic.resolve`) to resolve 4-state logic values ('X', 'Z')
+  to a simpler 2-state representation.
 - **`default`**: The value returned if the signal is an **optional signal** that is unconnected.
 
 ```python

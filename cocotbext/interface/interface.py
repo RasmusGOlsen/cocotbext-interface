@@ -112,6 +112,7 @@ class ClockedSignal:
                 else:
                     logger.warning(f"{self._handle} is not resolvable")
             return value
+        return default
 
     def __getattr__(self, name):
         """Forward other cocotb handle methods (like ._name, etc)"""
