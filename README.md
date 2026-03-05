@@ -29,7 +29,17 @@ By mimicking the SystemVerilog `interface` structure, verification engineers can
 
 ---
 
-## 2. Part I: Designing the Interface
+## 2. Installation
+
+Install the package from PyPI using pip:
+
+```bash
+pip install cocotbext-interface
+```
+
+---
+
+## 3. Part I: Designing the Interface
 
 This section covers how to define the structure, timing, and access rules for a interface protocol.
 
