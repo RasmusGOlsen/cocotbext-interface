@@ -43,7 +43,7 @@ pip install cocotbext-interface
 
 This section covers how to define the structure, timing, and access rules for a interface protocol.
 
-### 2.1 The Interface Class
+### 3.1 The Interface Class
 
 To define a bus, inherit from the Interface class. Signals are now defined as class attributes using type hints, which
 determines whether they are required or optional during RTL binding.
@@ -68,7 +68,7 @@ class MyBus(Interface):
 
 These attribute names are used directly by the framework to search for matching signal names within the RTL hierarchy.
 
-### 2.2 Defining Clocking Blocks
+### 3.2 Defining Clocking Blocks
 
 Use the `@clocking` decorator on an inner class. This defines the temporal behavior for synchronous signals.
 
@@ -77,7 +77,7 @@ Use the `@clocking` decorator on an inner class. This defines the temporal behav
 - `input`: Input skew (Sample delay). Can be a `Timer` or another `Trigger`.
 - `output`: Output skew (Drive delay).
 
-### 2.3 Defining Modports
+### 3.3 Defining Modports
 
 Use the `@modport` decorator to group signals and clocking blocks for specific roles like `source`, `sink` or `monitor`.
 
@@ -86,12 +86,13 @@ Use the `@modport` decorator to group signals and clocking blocks for specific r
 - `Input`/`Output`/`InOut`: Signals accessible in this modport.
 - `Import`: Method names (APIs) exposed to this modport.
 
-### 2.4 Complete Definition Example
+### 3.4 Complete Definition Example
 
 ```python
+from typing import Callable
 from cocotb.handles import LogicArrayObject, LogicObject
 from cocotb.triggers import RisingEdge, FallingEdge, Timer
-from interface_framework import Interface, modport, clocking, Import, Input, Output
+from cocotbext.interface import Interface, modport, clocking, Import, Input, Output
 
 class AxiStream(Interface):
     clk:    LogicObject
@@ -131,11 +132,11 @@ class AxiStream(Interface):
 
 ---
 
-## 3. Part II: Using the Interface
+## 4. Part II: Using the Interface
 
 This section covers how to connect the interface to the DUT and use it in a test.
 
-### 3.1 Instantiation & Connection
+### 4.1 Instantiation & Connection
 
 Interfaces are connected to the RTL using named constructors. These methods automatically map your class attributes to
 the corresponding signals in the HDL hierarchy.
@@ -148,8 +149,7 @@ Use `from_entity` when the signal names in the RTL match your class attribute na
 level. This is a strict connection method that does not support overrides or pattern substitutions.
 
 ```python
-# Connects to dut.tdata and
-dut.rdy directly
+# Connects to dut.data and dut.rdy directly
 bus = MyBus.from_entity(dut)
 ```
 
@@ -199,9 +199,8 @@ bus = MyBus.from_pattern(dut, pattern="/u_axi_[0-9]_%/")
 
 While `from_entity` is strict, `from_pattern` allows for flexibility when the RTL structure is non-standard:
 
-- **Keyword Overrides:** Pass a signal handle as a keyword argument to skip the pattern search for that specific
-  attribute.Indexing: Use the `idx` argument to index into all signals discovered via the pattern (e.g.,
-  `dut.u_axi_tdata[1]`).
+- **Keyword Overrides:** Pass a signal handle as a keyword argument to skip the pattern search for that specific attribute.
+- **Indexing:** Use the `idx` argument to index into all signals discovered via the pattern (e.g., `dut.u_axi_tdata[1]`).
 
 ```python
 # Connect to index 1 and manually override 'rdy'
@@ -211,29 +210,38 @@ bus = MyBus.from_pattern(dut, pattern="u_axi_%", idx=1, rdy=dut.global_rdy)
 > [!TIP] To confirm your signals are correctly bound, you can print `print(bus)` or `print(f"{bus=}")` the bus object to
 > inspect the resolved RTL paths.
 
-### 3.2 Synchronous Driving (Non-Blocking)
+### 4.2 Synchronous Driving (Non-Blocking)
 
 When using a modport's clocking block, driving a signal schedules an update for the next clock edge + output skew. It
 does not block the current coroutine.
 
 ```python
 # Drive data through the source modport
-bus.source.src_cb.tdata.value = 0xABCD
-bus.source.src_cb.tvalid.value = 1
+bus.source.cb.tdata.value = 0xABCD
+bus.source.cb.tvalid.value = 1
 ```
 
-### 3.3 Synchronous Sampling (Blocking)
+### 4.3 Synchronous Sampling (Blocking)
 
 To read a signal synchronously, you **must** use `await ...capture()`. This ensures the simulation waits for the clock
 edge and the defined input skew before returning the value.
 
+The `capture()` method accepts two optional arguments:
+
+- **`resolver`**: A resolution function (e.g., `cocotb.types.Logic.resolve`) to resolve 4-state logic values ('X', 'Z') to
+  a simpler 2-state representation.
+- **`default`**: The value returned if the signal is an **optional signal** that is unconnected.
+
 ```python
 # Wait until sink is ready
-while await bus.source.src_cb.tready.capture() == 0:
-    await bus.source.src_cb.wait() # Wait for 1 clock cycle
+while await bus.source.cb.tready.capture() == 0:
+    await bus.source.cb.wait() # Wait for 1 clock cycle
+
+# Capture with resolution and a default value for optional signals
+data = await bus.sink.cb.tdata.capture(resolver=Logic.resolve, default=0)
 ```
 
-### 3.4 Using Interface APIs
+### 4.4 Using Interface APIs
 
 Methods defined in the interface and imported in the modport can be called directly.
 
@@ -244,7 +252,7 @@ await bus.source.reset()
 
 ---
 
-## 4. Technical Summary
+## 5. Technical Summary
 
 | SystemVerilog Concept | Framework Implementation            | Behavior                               |
 | :-------------------- | :---------------------------------- | :------------------------------------- |
@@ -259,7 +267,7 @@ await bus.source.reset()
 
 ---
 
-## 5. Best Practices
+## 6. Best Practices
 
 1. Define separate clocking blocks for Source and Sink roles to account for different signal access and physical skews.
 2. Don't give access to synchronous signals in the `modport`, this forces the user to use the clocking block.
