@@ -125,6 +125,7 @@ def mock_hierarchy():
     hierarchy.add_signal("clk")
     hierarchy.add_signal("rst")
     hierarchy.add_signal("data")  # Generic data signal
+    hierarchy.add_signal("write")
     hierarchy.add_signal("data_in")
     hierarchy.add_signal("data_out")
     hierarchy.add_signal("valid")
@@ -164,6 +165,24 @@ class InterfaceWithModport(Interface):
 
     def receive(self) -> None:
         pass
+
+
+class InterfaceWithCollidingImport(Interface):
+    """Test a modport callable sharing its name with an HDL signal."""
+
+    clk: Output[object]
+    write: Input[object]
+
+    @clocking(clock="clk")
+    class cb:
+        write: Input[object]
+
+    @modport(clocking="cb")
+    class master:
+        write: Import[Callable]
+
+    def write(self) -> str:
+        return "method"
 
 
 class InterfaceWithClocking(Interface):
@@ -388,6 +407,13 @@ class TestModports:
 
         assert hasattr(iface, "send")
         assert hasattr(master, "send")
+
+    def test_modport_import_callable_wins_signal_name_collision(self, mock_hierarchy):
+        iface = InterfaceWithCollidingImport.from_entity(mock_hierarchy)
+
+        assert callable(iface.master.write)
+        assert iface.master.write() == "method"
+        assert iface.cb.write._handle is mock_hierarchy._children["write"]
 
     def test_modport_dont_contains_callable(self, mock_hierarchy):
         """Test that modport contains the mapped callable."""

@@ -205,12 +205,21 @@ class ModportView:
             origin = getattr(_type, "__origin__", None)
 
             if origin is Import:
-                # 1. Map Method from parent Interface
-                if hasattr(parent, name):
-                    setattr(self, name, getattr(parent, name))
+                # Resolve class methods before instance attributes, which may
+                # contain an HDL signal with the same name as the imported method.
+                imported = inspect.getattr_static(type(parent), name, None)
+                if imported is not None:
+                    descriptor_get = getattr(imported, "__get__", None)
+                    if descriptor_get is not None:
+                        imported = descriptor_get(parent, type(parent))
+                else:
+                    imported = getattr(parent, name, None)
+
+                if callable(imported):
+                    setattr(self, name, imported)
                 else:
                     raise AttributeError(
-                        f"Modport '{mp_cls.__name__}' expected imported method '{name}', "
+                        f"Modport '{mp_cls.__name__}' expected imported callable '{name}', "
                         f"but it was not found in {parent.__class__.__name__}"
                     )
 
