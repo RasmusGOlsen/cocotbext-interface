@@ -47,12 +47,16 @@ jobs:
         run: tox run -e pkg
 
   test:
-    name: Test with tox (Python ${{ matrix.python-version }})
+    name: Test with tox (Python ${{ matrix.python-version }}, cocotb ${{ matrix.cocotb-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+        cocotb-version: ["2.0", "2.1"]
+        exclude:
+          - python-version: "3.8"
+            cocotb-version: "2.1"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
@@ -66,7 +70,9 @@ jobs:
       - name: Install tox
         run: uv pip install --system tox tox-uv
       - name: Run tox
-        run: tox run -e py$(echo ${{ matrix.python-version }} | tr -d .)
+        run:
+          tox run -e py$(echo ${{ matrix.python-version }} | tr -d .)-cocotb$(echo ${{ matrix.cocotb-version }} | tr -d
+          .)
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
